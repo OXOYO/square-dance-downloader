@@ -1,0 +1,13 @@
+
+{
+  "code": "0",
+  "datas": [{
+    "cdn_source": "acc",
+    "define": 2,
+    "url": "https:\/\/acctv.tangdou.com\/202110\/20000000551036_H720P.mp4?sign=323ba42824281c55987f628dd0bb6f95&stTime=1634962608"
+  }, {
+    "cdn_source": "ucloud",
+    "define": 2,
+    "url": "https:\/\/auc.tangdou.com\/202110\/20000000551036_H720P.mp4?k=defe5f936b77bb98&t=1634991408"
+  }]
+}
