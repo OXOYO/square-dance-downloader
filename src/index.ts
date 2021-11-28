@@ -1,8 +1,8 @@
 import {downloadJingXuan} from "./parser";
 import fs from 'fs';
-import {PATH_DATA} from "./util";
+import {getDataPath} from "./util";
 
-fs.mkdirSync(PATH_DATA, {recursive: true});
+fs.mkdirSync(getDataPath(), {recursive: true});
 
 downloadJingXuan().then(()=>{
     console.log('所有视频下载完成');

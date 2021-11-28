@@ -3,3 +3,4 @@ node_modules
 .DStore
 data
 dist
+.DS_Store

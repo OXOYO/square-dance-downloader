@@ -1,60 +1,71 @@
 import fs from 'fs';
-import path from 'path';
-import crypto from 'crypto';
-import Url from 'url';
-import {aixosInstance, PATH_DATA} from "./util";
+import {aixosInstance, getDataPath} from "./util";
 import {DownProgressCallback} from "./api";
-import {AxiosError} from "axios";
+import {AxiosError, AxiosRequestConfig, AxiosResponseHeaders} from "axios";
+import path from "path";
 
-function getMd5(data: string) {
-    let hash = crypto.createHash('md5');
-    return hash.update(data).digest('hex');
+export async function getHeadersInfo(url: string) {
+    let config: AxiosRequestConfig<void> = {
+        method: 'head',
+        url
+    };
+    const response = await aixosInstance.request<void>(config);
+    return response.headers;
 }
 
-function genNameByUrl(url: string) {
-    const {protocol, host,pathname} = Url.parse(url, true);
-    const noQueryUrl = `${protocol}//${host}${pathname}`;
-    return getMd5(noQueryUrl);
+export function getContentLengthFromHeaders(headers: AxiosResponseHeaders): number {
+    return +(headers['Content-Length'] || headers['content-length'] || -1);
 }
 
-export async function downloadFile(url: string, options?: {
+export async function preFetchVideoSize(url: string) {
+    let headers = await getHeadersInfo(url);
+    return getContentLengthFromHeaders(headers);
+}
+
+export async function downloadFile(url: string, filePath: string, options?: {
     force?: boolean;
     progressCallback?: DownProgressCallback
-}) {
-    let fixedOptions = Object.assign({
+}): Promise<void> {
+    filePath = path.resolve(getDataPath(), filePath);
+    let mergedOptions = Object.assign({
         force: false
     }, options);
-    const name = genNameByUrl(url);
-    const fileName = name + '.mp4';
-    const filePath = path.resolve(PATH_DATA, fileName);
-
-    const {data, headers} = await aixosInstance.request<fs.ReadStream>({
+    let config: AxiosRequestConfig<fs.ReadStream> = {
         method: 'get',
         url,
+        headers: {},
         responseType: "stream",
-    });
-    const contentLength = +headers['content-length'];
-    const updateProgress = (load: number, error = false)=>{
-        fixedOptions.progressCallback && fixedOptions.progressCallback({
+    };
+    let contentLength = Infinity;
+    const updateProgress = (load: number, error = false) => {
+        mergedOptions.progressCallback && mergedOptions.progressCallback({
             load,
             total: contentLength,
             error,
         })
     }
-    if (!fixedOptions.force && fs.existsSync(filePath)) {
-        const {size} = fs.statSync(filePath)
+    let startDownRangeStart = 0;
+    if (!mergedOptions.force && fs.existsSync(filePath)) {
+        contentLength = await preFetchVideoSize(url);
+        const {size} = fs.statSync(filePath);
+        startDownRangeStart = size;
         if (contentLength && size >= contentLength) {
             // console.log(`${url} 已经下载：${filePath}`);
             updateProgress(contentLength);
             // TODO close 
-            return fileName;
+            return;
         }
     }
-    const pr = new Promise<string>((resolve, reject) => {
+    if (startDownRangeStart > 0) {
+        config.headers!['Range'] = `bytes=${startDownRangeStart}-`;
+    }
+    const {data, headers} = await aixosInstance.request<fs.ReadStream>(config);
+    contentLength = getContentLengthFromHeaders(headers);
+    const pr = new Promise<void>((resolve, reject) => {
         let loadSize = 0;
         const resolveTruth = () => {
             updateProgress(contentLength);
-            resolve(fileName)
+            resolve()
         };
         const rejectTruth = (e: AxiosError) => {
             updateProgress(loadSize, true);
@@ -63,17 +74,17 @@ export async function downloadFile(url: string, options?: {
         data.on('error', rejectTruth);
         data.on('end', resolveTruth);
         data.on('finish', resolveTruth);
-        if (fixedOptions.progressCallback) {
-            data.on('data', chunk=>{
+        if (mergedOptions.progressCallback) {
+            data.on('data', chunk => {
                 loadSize += chunk.length;
-                fixedOptions.progressCallback && fixedOptions.progressCallback({
+                mergedOptions.progressCallback && mergedOptions.progressCallback({
                     load: loadSize,
                     total: contentLength
                 })
             })
         }
     });
-    const writeFileStream = fs.createWriteStream(filePath);
+    const writeFileStream = fs.createWriteStream(filePath, {flags: 'a'});
     data.pipe(writeFileStream);
     return pr;
 }

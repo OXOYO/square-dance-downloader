@@ -1,18 +1,18 @@
 import axios from 'axios';
 import fs from 'fs';
 import path from 'path';
-import {CODE_SUCCESS, COMMON_HEADERS, FILE_DOWNLOAD_INFO, PATH_DATA} from "./util";
+import {CODE_SUCCESS, COMMON_HEADERS, fixFileOrDirName, getDataPath, getMd5} from "./util";
 import {
     ApiRes,
-    DownloadInfoData,
     DownloadSource,
-    DownloadVideoInfo, DownProgressCallback,
+    DownloadVideoInfo,
+    DownProgressCallback,
     JingXuanListItem,
     Video
 } from "./api";
 import {downloadFile} from "./downloader";
-import ora from "ora";
 import {ProgressSpinner} from "./ProgressSpinner";
+import Url from "url";
 
 async function getVideoUrl(vid: string) {
     const {data} = await axios.request<ApiRes<DownloadSource[]>>({
@@ -71,6 +71,28 @@ async function getJingXuanVList(pid: string) {
 //     console.log(result);
 // })
 
+function genIdByUrl(url: string) {
+    const {protocol, host, pathname} = Url.parse(url, true);
+    const noQueryUrl = `${protocol}//${host}${pathname}`;
+    return getMd5(noQueryUrl);
+}
+
+export function mkDirByTags(tags: string[]) {
+    const tagsDir = path.join(...tags.map(tag => fixFileOrDirName(tag)).filter(s => s));
+
+    const tagPath = path.resolve(getDataPath(), tagsDir);
+    if (!fs.existsSync(tagPath)) {
+        fs.mkdirSync(tagPath, {recursive: true});
+    }
+
+    return tagsDir;
+}
+
+export function getVideoDownloadRePath(url: string, title: string, tags: string[]): string {
+    const fileName = fixFileOrDirName(title) + '.mp4';
+    return path.join(mkDirByTags(tags), fileName);
+}
+
 async function pushDownload(video: Video, tags: string[] = []) {
     const videoInfo: DownloadVideoInfo = {
         tags,
@@ -81,52 +103,17 @@ async function pushDownload(video: Video, tags: string[] = []) {
     const videoUrlInfo = await getVideoUrl(video.vid)
     if (videoUrlInfo) {
         const videoUrl = selectVideoUrl(videoUrlInfo);
-        const filePath = await downloadFile(videoUrl, {
+        let filePath = getVideoDownloadRePath(videoUrl,video.title, tags);
+        await downloadFile(videoUrl, filePath, {
             progressCallback: getLoadingLoggerCallback(videoInfo)
         });
         videoInfo.file = filePath;
-        const downloadInfoData = getDownloadInfo();
-        const existItem = downloadInfoData.list.find(a => a.vid === video.vid);
-        if (existItem) {
-            Object.assign(existItem, videoInfo);
-        } else {
-            downloadInfoData.list.push(videoInfo);
-        }
     }
 }
-
-function writeDownloadInfo(data: DownloadInfoData) {
-    const dataFile = path.resolve(PATH_DATA, FILE_DOWNLOAD_INFO);
-    fs.writeFileSync(dataFile, JSON.stringify(data, null, 2));
-}
-
-function readDownloadInfo(): DownloadInfoData {
-    const dataFile = path.resolve(PATH_DATA, FILE_DOWNLOAD_INFO);
-    if (fs.existsSync(dataFile)) {
-        try {
-            return JSON.parse(fs.readFileSync(dataFile).toString())
-        } catch (e) {
-            console.warn(e);
-        }
-    }
-    return  {
-        list: []
-    } as DownloadInfoData;
-}
-
-const getDownloadInfo = (()=>{
-    let downloadInfo: DownloadInfoData;
-    return (force = false)=>{
-        if(force || !downloadInfo) {
-            downloadInfo = readDownloadInfo()
-        }
-        return downloadInfo;
-    }
-})();
 
 const getSpinner = (() => {
-    let  progressSpinner:ProgressSpinner;
-    return ()=>{
+    let progressSpinner: ProgressSpinner;
+    return () => {
         if (!progressSpinner) {
             progressSpinner = new ProgressSpinner()
         }
@@ -136,7 +123,7 @@ const getSpinner = (() => {
 
 export function getLoadingLoggerCallback(video: DownloadVideoInfo): DownProgressCallback {
     getSpinner().pushItem(video);
-    return (event)=>{
+    return (event) => {
         const {load, total, error} = event;
         let progressPercent = +(load / total * 100).toFixed(1);
         if (progressPercent >= 100 && load < total) {
@@ -148,22 +135,23 @@ export function getLoadingLoggerCallback(video: DownloadVideoInfo): DownProgress
 
 export async function downloadJingXuan() {
     let menu = await getJingXuanMenu()
-    let tags = ['精选'];
+    let tags = ['精选广场舞'];
     if (menu) {
-        // FIXME
-        // menu = menu.slice(0,1);
-        await Promise.all(menu.map(async menuItem=>{
+        if(process.env.NODE_ENV === 'dev') {
+            menu = menu.slice(0,1);
+        }
+        await Promise.all(menu.map(async menuItem => {
             let tag1 = tags.concat([menuItem.title]);
             let videoList = await getJingXuanVList(menuItem.id)
             if (videoList) {
-                // FIXME
-                // videoList = videoList.slice(0,1);
-                await Promise.all(videoList.map(async video =>{
-                   await pushDownload(video, tag1);
+                if(process.env.NODE_ENV === 'dev') {
+                    videoList = videoList.slice(0,2);
+                }
+                await Promise.all(videoList.map(async video => {
+                    await pushDownload(video, tag1);
                 }));
             }
         }))
-        writeDownloadInfo(getDownloadInfo())
         getSpinner().stop();
     }
 }
